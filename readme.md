@@ -5,6 +5,7 @@ title: Some DL Models
 ## Dependency
 
 mxnet == 2.0.0 (commit: de5105824)
+
 gluoncv == 0.7.0
 
 ## YOLOv3 + GIoU (2020.05.23)

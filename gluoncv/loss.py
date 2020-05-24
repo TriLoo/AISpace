@@ -712,8 +712,8 @@ class GIoULoss(Loss):
         union = (w1 * h1 + 1e-6) + w2 * h2 - inter
 
         iou = inter / union
-        cw = F.maximum(b1_x2, b2_x2) - nd.minimum(b1_x1, b2_x1)
-        ch = F.maximum(b1_y2, b2_y2) - nd.minimum(b1_y1, b2_y1)
+        cw = F.maximum(b1_x2, b2_x2) - F.minimum(b1_x1, b2_x1)
+        ch = F.maximum(b1_y2, b2_y2) - F.minimum(b1_y1, b2_y1)
         c_area = cw * ch + 1e-6
 
         giou = iou - (c_area - union) / c_area
@@ -775,7 +775,7 @@ class YOLOV3LossGIoU(Loss):
         # compute some normalization count, except batch-size
         denorm = F.cast(
             F.shape_array(objness_t).slice_axis(axis=0, begin=1, end=None).prod(), 'float32')
-        weight_t = F.broadcast_mul(weight_t, objness_t)
+        weight_t = F.sum(F.broadcast_mul(weight_t, objness_t), axis=-1, keepdims=True) / 2
         hard_objness_t = F.where(objness_t > 0, F.ones_like(objness_t), objness_t)
         new_objness_mask = F.where(objness_t > 0, objness_t, objness_t >= 0)
         obj_loss = F.broadcast_mul(
@@ -789,8 +789,11 @@ class YOLOV3LossGIoU(Loss):
         # calculate the giou based on the shifted pred box & gt box
         box_gt = F.concat(center_t, scale_t, dim=-1)          # gt box in center format
         box_pred = F.concat(box_centers, box_scales, dim=-1)  # pred box in center format
-        box_mask = F.where(objness_t > 0, F.ones_like(objness_t), F.zeros_like(objness_t))         # only consider the postitve boxes
-        box_loss = self._giou_loss(box_pred, box_gt, box_mask) * self.giou_lambda
+        # method-1: use hard mask
+        # box_mask = F.where(objness_t > 0, F.ones_like(objness_t), F.zeros_like(objness_t))         # only consider the postitve boxes
+        # box_loss = self._giou_loss(box_pred, box_gt, box_mask) * self.giou_lambda
+        # method-2: use weight_t
+        box_loss = self._giou_loss(box_pred, box_gt, weight_t) * self.giou_lambda
 
         denorm_class = F.cast(
             F.shape_array(class_t).slice_axis(axis=0, begin=1, end=None).prod(), 'float32')

@@ -35,3 +35,6 @@ from .residual_attentionnet import *
 from .center_net import *
 from .hrnet import *
 from .siamrpn import *
+
+# add by smh
+from .resnetv1b_wsdan import *

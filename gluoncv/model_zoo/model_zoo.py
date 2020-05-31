@@ -40,6 +40,8 @@ from .center_net import *
 from .hrnet import *
 from .siamrpn import *
 from .icnet import *
+# add by mh
+from .resnetv1b_wsdan import *
 
 __all__ = ['get_model', 'get_model_list']
 
@@ -351,6 +353,8 @@ _models = {
     'hrnet_w18_small_v2_s' : hrnet_w18_small_v2_s,
     'hrnet_w48_s' : hrnet_w48_s,
     'siamrpn_alexnet_v2_otb15': siamrpn_alexnet_v2_otb15,
+    # add by mh below
+    'resnet34v1b_wsdan' : resnet34_v1b_wsdan,
 }
 
 

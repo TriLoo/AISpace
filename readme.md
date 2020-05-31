@@ -18,7 +18,7 @@ gluoncv == 0.7.0
 
   According to YOLOv4, the Mish action & GIoU Loss can boost the detection mAP greatly, the replace of LeakyReLU to Mish is easy, so only GIoU loss is implemented here.
 
-## WS-DAN
+## WS-DAN (2020.05, 31)
 
   <Weakly Supervised Data Augmentation Network> for FGVC (Fine-Grained Visual Classification)
 
@@ -27,6 +27,7 @@ gluoncv == 0.7.0
   some pytorch op is not support by mxnet, so some used mxnet ops are not efficient as expected!
 
   for example, when generate the crop mask, I have copied the data from gpu to cpu to calculate the max nonzero areas, this is so slow and I'm going to fix this soon.
+  (no `asnumpy()` is used but the code is still so ugly ... (2020.05.31)).
 
 ## TODO
 

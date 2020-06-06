@@ -29,6 +29,18 @@ gluoncv == 0.7.0
   for example, when generate the crop mask, I have copied the data from gpu to cpu to calculate the max nonzero areas, this is so slow and I'm going to fix this soon.
   (no `asnumpy()` is used but the code is still so ugly ... (2020.05.31)).
 
+  update (2020.06.06)
+
+  * change the center loss to HybridBlock based implementation, the new implmented method have no need to support symbol operators, such that all convenient ops from nd can be used.
+    cf: [mxnet-center-loss - github](https://github.com/ShownX/mxnet-center-loss/blob/master/center_loss.py)
+    caution:
+      the update of center feature matrix can be a step of backward from another `center_trainer`, which means, the L2Loss's gradient is exactly the update calculation according to the paper.
+      An easy reduction of math can verify this.
+  * changed the implementation of `drop` & `crop` mask creation
+  * now the speed is also accelerated
+  * TODO:
+    accelerate the calculation of Bilinear Attention Pooling using FFT & IFFT
+
 ## TODO
 
 * CycleGAN: training

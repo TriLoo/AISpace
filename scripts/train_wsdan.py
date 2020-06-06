@@ -1,4 +1,4 @@
-""" @package train_wsdan.py
+""" @package train_wsdan_temp.py
     implementation of <See Better Before Looking Closer: ...> based on ResNet34
 """
 # -*- coding: utf-8 -*-
@@ -21,64 +21,53 @@ from utils import load_rec_datasets
 
 EPSILON = 1e-12
 
+
 def batch_argument(images, attention_map, mode='crop', theta=0.5, pading_ratio=0.1):
     batches, _, imgH, imgW = images.shape
-    if mode == 'crop':
-        crop_images = []
-        for batch_idx in range(batches):
-            atten_map = attention_map[batch_idx : batch_idx + 1]
-            if isinstance(theta, (list, tuple)):
-                theta_c = random.uniform(*theta) * (atten_map.max() - atten_map.min()) + atten_map.min()
-            else:
-                theta_c = theta * (atten_map.max() - atten_map.min()) + atten_map.min()
+    with autograd.pause():
+        if mode == 'crop':
+            crop_images = []
+            for batch_idx in range(batches):
+                atten_map = attention_map[batch_idx : batch_idx + 1]
+                if isinstance(theta, (list, tuple)):
+                    theta_c = random.uniform(*theta) * (atten_map.max() - atten_map.min()) + atten_map.min()
+                else:
+                    theta_c = theta * (atten_map.max() - atten_map.min()) + atten_map.min()
 
-            # TODO: change the implement to not use GGPU -> CPU copy and get the outest box position
-            crop_mask = mx.nd.contrib.BilinearResize2D(atten_map, height=imgH, width=imgW)[0, 0, ...] >= theta_c
-            # print('shape of crop_mask: ', crop_mask.shape)
-            crop_mask_sumrow = mx.nd.sum(crop_mask, axis=1)
-            crop_mask_row = mx.nd.where(crop_mask_sumrow > 0, mx.nd.arange(0, crop_mask.shape[0], ctx=crop_mask_sumrow.context), mx.nd.zeros_like(crop_mask_sumrow))
-            crop_mask_sumcol = mx.nd.sum(crop_mask, axis=0)
-            crop_mask_col = mx.nd.where(crop_mask_sumcol > 0, mx.nd.arange(0, crop_mask.shape[1], ctx=crop_mask_sumcol.context), mx.nd.zeros_like(crop_mask_sumcol))
+                # TODO: change the implement to not use GGPU -> CPU copy and get the outest box position
+                crop_mask = mx.nd.contrib.BilinearResize2D(atten_map, height=imgH, width=imgW)[0, 0, ...] >= theta_c
+                # print('shape of crop_mask: ', crop_mask.shape)
+                crop_mask_sumrow = mx.nd.sum(crop_mask, axis=1)
+                crop_mask_row = mx.nd.where(crop_mask_sumrow > 0, mx.nd.arange(0, crop_mask.shape[0], ctx=crop_mask_sumrow.context), mx.nd.zeros_like(crop_mask_sumrow))
+                crop_mask_sumcol = mx.nd.sum(crop_mask, axis=0)
+                crop_mask_col = mx.nd.where(crop_mask_sumcol > 0, mx.nd.arange(0, crop_mask.shape[1], ctx=crop_mask_sumcol.context), mx.nd.zeros_like(crop_mask_sumcol))
 
-            height_min = max(min(int(crop_mask_row.min().asscalar() - pading_ratio * imgH), int((1 - 2 * pading_ratio) * imgH)), 0)
-            height_max = min(max(int(crop_mask_row.max().asscalar() - pading_ratio * imgH), int(pading_ratio * imgH)), imgH)
-            width_min = max(min(int(crop_mask_col.min().asscalar() -  pading_ratio * imgW), int((1 - 2 * pading_ratio) * imgW)), 0)
-            width_max = min(max(int(crop_mask_col.max().asscalar() - pading_ratio * imgW), int(pading_ratio * imgW)), imgW)
+                height_min = max(min(int(crop_mask_row.min().asscalar() - pading_ratio * imgH), int((1 - 2 * pading_ratio) * imgH)), 0)
+                height_max = min(max(int(crop_mask_row.max().asscalar() - pading_ratio * imgH), int(pading_ratio * imgH)), imgH)
+                width_min = max(min(int(crop_mask_col.min().asscalar() -  pading_ratio * imgW), int((1 - 2 * pading_ratio) * imgW)), 0)
+                width_max = min(max(int(crop_mask_col.max().asscalar() - pading_ratio * imgW), int(pading_ratio * imgW)), imgW)
 
-            # crop_mask = mx.nd.contrib.BilinearResize2D(atten_map, height=imgH, width=imgW).asnumpy() >= theta_c.asscalar()
-            # nonzero_idx = np.nonzero(crop_mask[0, 0, ...])
-            # # print('nonzero_idx[1]: ', nonzero_idx[1])
-            # # print('max of nonzero_idx[1]: ', nonzero_idx[1].max())
-            # height_min = max(min(int(nonzero_idx[0].min() - pading_ratio * imgH), int((1 - 2 * pading_ratio) * imgH)), 0)
-            # height_max = min(max(int(nonzero_idx[0].max() - pading_ratio * imgH), int(pading_ratio * imgH)), imgH)
-            # width_min = max(min(int(nonzero_idx[1].min() -  pading_ratio * imgW), int((1 - 2 * pading_ratio) * imgW)), 0)
-            # width_max = min(max(int(nonzero_idx[1].max() - pading_ratio * imgW), int(pading_ratio * imgW)), imgW)
-            # print('current h_min: ', height_min)
-            # print('current h_max: ', height_max)
-            # print('current w_min: ', width_min)
-            # print('current w_max: ', width_max)
+                crop_images.append(mx.nd.contrib.BilinearResize2D(images[batch_idx : batch_idx + 1, :, height_min : height_max, width_min:width_max], height=imgH, width=imgW))
+            crop_images = mx.nd.concat(*crop_images, dim=0)
 
-            crop_images.append(mx.nd.contrib.BilinearResize2D(images[batch_idx : batch_idx + 1, :, height_min : height_max, width_min:width_max], height=imgH, width=imgW))
-        crop_images = mx.nd.concat(*crop_images, dim=0)
+            return crop_images
+        elif mode == 'drop':
+            drop_masks = []
+            for batch_idx in range(batches):
+                atten_map = attention_map[batch_idx : batch_idx + 1]
+                if isinstance(theta, (list, tuple)):
+                    theta_d = random.uniform(*theta) * (atten_map.max() - atten_map.min()) + atten_map.min()
+                else:
+                    theta_d = theta * (atten_map.max() - atten_map.min()) + atten_map.min()
+                
+                drop_masks.append(mx.nd.contrib.BilinearResize2D(atten_map, height=imgH, width=imgW) < theta_d)
+            drop_masks = mx.nd.concat(*drop_masks, dim=0)
+            drop_images = images * drop_masks
 
-        return crop_images
-    elif mode == 'drop':
-        drop_masks = []
-        for batch_idx in range(batches):
-            atten_map = attention_map[batch_idx : batch_idx + 1]
-            if isinstance(theta, (list, tuple)):
-                theta_d = random.uniform(*theta) * (atten_map.max() - atten_map.min()) + atten_map.min()
-            else:
-                theta_d = theta * (atten_map.max() - atten_map.min()) + atten_map.min()
-            
-            drop_masks.append(mx.nd.contrib.BilinearResize2D(atten_map, height=imgH, width=imgW) < theta_d)
-        drop_masks = mx.nd.concat(*drop_masks, dim=0)
-        drop_images = images * drop_masks
+            return drop_images
 
-        return drop_images
-
-    else:
-        raise ValueError("Expected mode in ['crop', 'drop'], but got %s " % mode)
+        else:
+            raise ValueError("Expected mode in ['crop', 'drop'], but got %s " % mode)
 
 def save_params(net, best_acc, current_acc, epoch, save_interval, prefix):
     current_acc = float(current_acc)
@@ -147,8 +136,10 @@ def train(net, train_data, eval_data, ctx, args, batch_size, epoches=1):
         L = gluon.loss.SoftmaxCrossEntropyLoss(sparse_label=False)   # Used for smooth label
     else:
         L = gluon.loss.SoftmaxCrossEntropyLoss()
-    center_loss = gluon.loss.L2Loss()
     ce_metric = mx.metric.Loss('CrossEntropy')
+    center_loss = gcv.loss.CenterLoss(args.class_num, 32 * 512, 5e-2)
+    center_loss.initialize(mx.init.Zero(), ctx=ctx)
+    center_trainer = gluon.Trainer(center_loss.collect_params(), 'sgd', {"learning_rate" : 1.0})
 
     logging.basicConfig()
     logger = logging.getLogger()
@@ -163,10 +154,7 @@ def train(net, train_data, eval_data, ctx, args, batch_size, epoches=1):
     logger.info('Start training from [Epoch {}]'.format(args.start_epoch))
     best_acc = [0]
 
-    # feature_center = mx.nd.zeros((args.class_num * batch_size, 32 * 512))
-    feature_center = mx.nd.zeros((batch_size, args.class_num, 32 * 512))
     for epoch in range(args.start_epoch, args.epochs):
-        feature_center_lst = gluon.utils.split_and_load(feature_center, ctx_list=ctx, batch_axis=0)
         while lr_steps and epoch >= lr_steps[0]:
             new_lr = trainer.learning_rate * lr_decay
             lr_steps.pop(0)
@@ -188,48 +176,28 @@ def train(net, train_data, eval_data, ctx, args, batch_size, epoches=1):
 
             with autograd.record():
                 loss = []
-                for X, y, feat_center, y_hard in zip(data, label, feature_center_lst, label_ori):
-                    # print('shape of X: ', X.shape)
-                    # print('shape of y_hard: ', y_hard.shape)
-                    # print('shape of feat_center: ', feat_center.shape)
-                    # print('current y: ', y_hard)
+                for X, y, y_hard in zip(data, label, label_ori):
                     y_hard = y_hard.squeeze().astype("int32")
                     pred, feat, atten = net(X)
                     cls_loss_raw = L(pred, y)
-                    # crop
-                    with autograd.pause():
-                        crop_img = batch_argument(X, atten[:, :1, :, :], 'crop', [0.4, 0.6])
+                    ## crop
+                    crop_img = batch_argument(X, atten[:, :1, :, :], 'crop', [0.4, 0.6])
                     pred_crop, _, _ = net(crop_img)
                     cls_loss_crop =  L(pred_crop, y)
-                    # drop
-                    with autograd.pause():
-                        drop_img = batch_argument(X, atten[:, 1:, :, :], 'drop', [0.2, 0.5])
+                    ## drop
+                    drop_img = batch_argument(X.detach(), atten[:, 1:, :, :], 'drop', [0.2, 0.5])
                     pred_drop, _, _ = net(drop_img)
                     cls_loss_drop = L(pred_drop, y)
-                    # center
-                    with autograd.pause():
-                        # udpate the feature center
-                        # I cannot figure out how mx.nd.pick() used to index along the axis=1
-                        feat_center_batch = []
-                        for i in range(y_hard.shape[0]):
-                            feat_center_single = feat_center[i, y_hard[i], :] / (mx.nd.norm(feat_center[i, y_hard[i], :], axis=-1) + EPSILON)
-                            feat_center[i, y_hard[i], :] += 5e-2 * (feat[i, :] - feat_center_single)
-                            feat_center_batch.append(feat_center_single)
-                        feat_center_batch = mx.nd.concat(*feat_center_batch, dim=0)
-
-                        # print('shape of y_hard: ', y_hard.shape)
-                        # print('shape of feat: ', feat.shape)
-                        # feat_center_batch = feat_center[:, y_hard] / (mx.nd.norm(feat_center[:, y_hard], axis=-1) + EPSILON)
-                        # print('shape of feat_center_batch: ', feat_center_batch.shape)
-                        # feat_center[:, y_hard] += 5e-2 * (feat - feat_center_batch)
-                    reg_loss = center_loss(feat_center_batch, feat)
+                    ## center
+                    reg_loss = center_loss(feat, y_hard)
                     
                     curr_loss = cls_loss_raw + cls_loss_crop + cls_loss_drop + reg_loss
                     loss.append(curr_loss)
             for l in loss:
                 l.backward()
-
             trainer.step(batch_size)
+            center_trainer.step(batch_size)
+
             train_loss = sum([l.mean().asscalar() for l in loss]) / len(loss)
             ce_metric.update(0, [mx.nd.array([train_loss])])
             if args.log_interval and not (i + 1) % args.log_interval:

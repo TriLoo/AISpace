@@ -3,41 +3,32 @@
 Losses are subclasses of gluon.loss.Loss which is a HybridBlock actually.
 """
 from __future__ import absolute_import
+import mxnet as mx
 from mxnet import gluon
 from mxnet import nd
 from mxnet.gluon.loss import Loss, _apply_weighting, _reshape_like
-from .nn.bbox import BBoxCenterToCorner, BBoxSplit
+import numpy as np
 
-__all__ = ['FocalLoss', 'SSDMultiBoxLoss', 'YOLOV3Loss', 'YOLOV3LossGIoU', 
+__all__ = ['CenterLoss', 'FocalLoss', 'SSDMultiBoxLoss', 'YOLOV3Loss',
            'MixSoftmaxCrossEntropyLoss', 'ICNetLoss', 'MixSoftmaxCrossEntropyOHEMLoss',
-           'SegmentationMultiLosses', 'DistillationSoftmaxCrossEntropyLoss', 'SiamRPNLoss']
+           'DistillationSoftmaxCrossEntropyLoss', 'SiamRPNLoss']
 
 
-def bbox_giou(pred, gt, x1y1x2y2=True):
-    if x1y1x2y2:
-        b1_x1, b1_y1, b1_x2, b1_y2 = pred[0], pred[1], pred[2], pred[3]
-        b2_x1, b2_y1, b2_x2, b2_y2 = gt[0], gt[1], gt[2], gt[3]
-    else:           # xywh
-        b1_x1, b1_y1 = pred[0] - pred[2] / 2, pred[1] - pred[3] / 2
-        b1_x2, b1_y2 = pred[0] + pred[2] / 2, pred[1] + pred[3] / 2
-        b2_x1, b2_y1 = gt[0] - gt[2] / 2, gt[1] - gt[3] / 2
-        b2_x2, b2_y2 = gt[0] + gt[2] / 2, gt[1] + gt[3] / 2
+class CenterLoss(Loss):
+    def __init__(self, cls_num, feat_dim, beta, weight=None, batch_axis=0, **kwargs):
+        super(CenterLoss, self).__init__(weight, batch_axis, **kwargs)
+        self.beta = beta
+        self.center_features = self.params.get("center_features", shape=(cls_num, feat_dim))
+        # self.center_features.initialize(init=mx.init.Zero())
 
-    # intersection
-    inter = nd.maximum(0.0, nd.minimum(b1_x2, b2_x2) - nd.maximum(b1_x1, b2_x1)) * nd.maximum(0.0, nd.minimum(b1_y2, b2_y2) - nd.maximum(b1_y1, b2_y1))
+    def hybrid_forward(self, F, feat, label, center_features):
+        hist = nd.array(np.bincount(label.asnumpy()), ctx=feat.context)
+        cls_count = nd.take(hist, label)
+        centers_selected = F.take(center_features, label)
+        diff = feat - centers_selected
+        loss = self.beta * 0.5 * F.sum(F.square(diff), 1) / cls_count
 
-    # union
-    w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1
-    w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1
-    union = (w1 * h1 + 1e-6) + w2 * h2 - inter
-
-    iou = inter / union
-    cw = nd.maximum(b1_x2, b2_x2) - nd.minimum(b1_x1, b2_x1)
-    ch = nd.maximum(b1_y2, b2_y2) - nd.minimum(b1_y1, b2_y1)
-    c_area = cw * ch + 1e-6
-
-    return iou - (c_area - union) / c_area          # GIoU
-
+        return F.mean(loss, axis=0, exclude=True)
 
 class FocalLoss(Loss):
     """Focal Loss for inbalanced classification.
@@ -156,28 +147,7 @@ class SSDMultiBoxLoss(gluon.Block):
         self._min_hard_negatives = max(0, min_hard_negatives)
 
     def forward(self, cls_pred, box_pred, cls_target, box_target):
-        """Compute loss in entire batch across devices.
-
-        Parameters
-        ----------
-        cls_pred : mxnet.nd.NDArray
-        Predicted classes.
-        box_pred : mxnet.nd.NDArray
-        Predicted bounding-boxes.
-        cls_target : mxnet.nd.NDArray
-        Ground-truth classes.
-        box_target : mxnet.nd.NDArray
-        Ground-truth bounding-boxes.
-
-        Returns
-        -------
-        tuple of NDArrays
-            sum_losses : array with containing the sum of
-                class prediction and bounding-box regression loss.
-            cls_losses : array of class prediction loss.
-            box_losses : array of box regression L1 loss.
-
-        """
+        """Compute loss in entire batch across devices."""
         # require results across different devices at this time
         cls_pred, box_pred, cls_target, box_target = [_as_list(x) \
             for x in (cls_pred, box_pred, cls_target, box_target)]
@@ -278,7 +248,7 @@ class YOLOV3Loss(Loss):
         """
         # compute some normalization count, except batch-size
         denorm = F.cast(
-            F.shape_array(objness_t).slice_axis(axis=0, begin=1, end=None).prod(), 'float32')       # number of pixels
+            F.shape_array(objness_t).slice_axis(axis=0, begin=1, end=None).prod(), 'float32')
         weight_t = F.broadcast_mul(weight_t, objness_t)
         hard_objness_t = F.where(objness_t > 0, F.ones_like(objness_t), objness_t)
         new_objness_mask = F.where(objness_t > 0, objness_t, objness_t >= 0)
@@ -335,22 +305,6 @@ class SoftmaxCrossEntropyLoss(Loss):
         loss = F.where(label.expand_dims(axis=1) == self._ignore_label,
                        F.zeros_like(loss), loss)
         return F.mean(loss, axis=self._batch_axis, exclude=True)
-
-
-class SegmentationMultiLosses(SoftmaxCrossEntropyLoss):
-    """2D Cross Entropy Loss with Multi-Loss"""
-    def __init__(self, size_average=True, ignore_label=-1, **kwargs):
-        super(SegmentationMultiLosses, self).__init__(size_average, ignore_label, **kwargs)
-
-    def hybrid_forward(self, F, *inputs, **kwargs):
-        pred1, pred2, pred3, label = tuple(inputs)
-
-        loss1 = super(SegmentationMultiLosses, self).hybrid_forward(F, pred1, label, **kwargs)
-        loss2 = super(SegmentationMultiLosses, self).hybrid_forward(F, pred2, label, **kwargs)
-        loss3 = super(SegmentationMultiLosses, self).hybrid_forward(F, pred3, label, **kwargs)
-        loss = loss1 + loss2 + loss3
-        return loss
-
 
 class MixSoftmaxCrossEntropyLoss(SoftmaxCrossEntropyLoss):
     """SoftmaxCrossEntropyLoss2D with Auxiliary Loss
@@ -683,121 +637,3 @@ class SiamRPNLoss(gluon.HybridBlock):
         loc_loss = self.weight_l1_loss(F, loc_pred, label_loc, label_loc_weight)
         cls_loss = self.cross_entropy_loss(F, cls_pred, label_cls, pos_index, neg_index)
         return cls_loss, loc_loss
-
-
-class GIoULoss(Loss):
-    def __init__(self, corner=True, axis=-1, batch_axis=0, weight=None, **kwargs):
-        super(GIoULoss, self).__init__(weight, batch_axis, **kwargs)
-        if corner:
-            self._pre = BBoxSplit(axis=axis, squeeze_axis=True)
-        else:
-            self._pre = BBoxCenterToCorner(axis=axis, split=True)
-    
-    def hybrid_forward(self, F, pred, gt, mask=None):
-        b1_x1, b1_y1, b1_x2, b1_y2 = self._pre(pred)        # shape (bs, 10647, 1)
-        b2_x1, b2_y1, b2_x2, b2_y2 = self._pre(gt)          # shape (bs, 10647, 1)
-
-        # (B, N, M)
-        left = F.maximum(b1_x1, b2_x1)
-        top  = F.maximum(b1_y1, b2_y1)
-        right  = F.minimum(b1_x2, b2_x2)
-        bottom = F.minimum(b1_y2, b2_y2)
-
-        iw = F.clip(right - left, a_min=0, a_max=6.55040e+04)
-        ih = F.clip(bottom - top, a_min=0, a_max=6.55040e+04)
-        inter = iw * ih
-
-        w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1
-        w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1
-        union = (w1 * h1 + 1e-6) + w2 * h2 - inter
-
-        iou = inter / union
-        cw = F.maximum(b1_x2, b2_x2) - F.minimum(b1_x1, b2_x1)
-        ch = F.maximum(b1_y2, b2_y2) - F.minimum(b1_y1, b2_y1)
-        c_area = cw * ch + 1e-6
-
-        giou = iou - (c_area - union) / c_area
-        if mask is None:
-            giou_loss =  F.sum(1.0 - giou, axis=(1, 2))
-        else:
-            giou_loss = F.sum(F.broadcast_mul(1.0 - giou, mask), axis=(1, 2))
-
-        return giou_loss          # GIoU
-
-
-class YOLOV3LossGIoU(Loss):
-    def __init__(self, batch_axis=0, weight=None, giou_lambda=1.0, **kwargs):
-        super(YOLOV3LossGIoU, self).__init__(weight, batch_axis, **kwargs)
-        self._sigmoid_ce = gluon.loss.SigmoidBinaryCrossEntropyLoss(from_sigmoid=False)
-        self._l1_loss = gluon.loss.L1Loss()
-        self._giou_loss = GIoULoss(corner=False)
-        self.giou_lambda = giou_lambda
-
-    def hybrid_forward(self, F, objness, box_centers, box_scales, cls_preds,
-                       objness_t, center_t, scale_t, weight_t, class_t, class_mask, anchor_t):
-                       # objness_t, center_t, scale_t, weight_t, class_t, class_mask):
-        """Compute YOLOv3 losses.
-
-        Parameters
-        ----------
-        objness : mxnet.nd.NDArray
-            Predicted objectness (B, N), range (0, 1).
-        box_centers : mxnet.nd.NDArray
-            Predicted box centers (x, y) (B, N, 2), range (0, 1).
-        box_scales : mxnet.nd.NDArray
-            Predicted box scales (width, height) (B, N, 2).
-        cls_preds : mxnet.nd.NDArray
-            Predicted class predictions (B, N, num_class), range (0, 1).
-        objness_t : mxnet.nd.NDArray
-            Objectness target, (B, N), 0 for negative 1 for positive, -1 for ignore.
-        center_t : mxnet.nd.NDArray
-            Center (x, y) targets (B, N, 2).
-        scale_t : mxnet.nd.NDArray
-            Scale (width, height) targets (B, N, 2).
-        weight_t : mxnet.nd.NDArray
-            Loss Multipliers for center and scale targets (B, N, 2).
-        class_t : mxnet.nd.NDArray
-            Class targets (B, N, num_class).
-            It's relaxed one-hot vector, i.e., (1, 0, 1, 0, 0).
-            It can contain more than one positive class.
-        class_mask : mxnet.nd.NDArray
-            0 or 1 mask array to mask out ignored samples (B, N, num_class).
-
-        Returns
-        -------
-        tuple of NDArrays
-            obj_loss: sum of objectness logistic loss
-            center_loss: sum of box center logistic regression loss
-            scale_loss: sum of box scale l1 loss
-            cls_loss: sum of per class logistic loss
-
-        """
-        # compute some normalization count, except batch-size
-        denorm = F.cast(
-            F.shape_array(objness_t).slice_axis(axis=0, begin=1, end=None).prod(), 'float32')
-        weight_t = F.sum(F.broadcast_mul(weight_t, objness_t), axis=-1, keepdims=True) / 2
-        hard_objness_t = F.where(objness_t > 0, F.ones_like(objness_t), objness_t)
-        new_objness_mask = F.where(objness_t > 0, objness_t, objness_t >= 0)
-        obj_loss = F.broadcast_mul(
-            self._sigmoid_ce(objness, hard_objness_t, new_objness_mask), denorm)
-
-        # first restore the width of the gt box & pred box
-        scale_t    = F.elemwise_mul(F.exp(scale_t), anchor_t)
-        box_scales = F.elemwise_mul(F.exp(box_scales), anchor_t)
-        # calculate the pred box center using sigmoid
-        box_centers = F.sigmoid(box_centers)
-        # calculate the giou based on the shifted pred box & gt box
-        box_gt = F.concat(center_t, scale_t, dim=-1)          # gt box in center format
-        box_pred = F.concat(box_centers, box_scales, dim=-1)  # pred box in center format
-        # method-1: use hard mask
-        # box_mask = F.where(objness_t > 0, F.ones_like(objness_t), F.zeros_like(objness_t))         # only consider the postitve boxes
-        # box_loss = self._giou_loss(box_pred, box_gt, box_mask) * self.giou_lambda
-        # method-2: use weight_t
-        box_loss = self._giou_loss(box_pred, box_gt, weight_t) * self.giou_lambda
-
-        denorm_class = F.cast(
-            F.shape_array(class_t).slice_axis(axis=0, begin=1, end=None).prod(), 'float32')
-        class_mask = F.broadcast_mul(class_mask, objness_t)
-        cls_loss = F.broadcast_mul(self._sigmoid_ce(cls_preds, class_t, class_mask), denorm_class)
-
-        return obj_loss, box_loss, cls_loss

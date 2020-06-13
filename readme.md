@@ -35,11 +35,29 @@ gluoncv == 0.7.0
     cf: [mxnet-center-loss - github](https://github.com/ShownX/mxnet-center-loss/blob/master/center_loss.py)
     caution:
       the update of center feature matrix can be a step of backward from another `center_trainer`, which means, the L2Loss's gradient is exactly the update calculation according to the paper.
-      An easy reduction of math can verify this.
+      An easy deduction of math can verify this.
   * changed the implementation of `drop` & `crop` mask creation
   * now the speed is also accelerated
   * TODO:
     accelerate the calculation of Bilinear Attention Pooling using FFT & IFFT
+
+## Ghost CenterNet (2020.06.13)
+
+  <CenterNet: Keypoint Triplets for Object Detection>
+
+  <GhostNet: More Features from Cheap Operations>
+
+  trained using COCO 2017 train/val split.
+
+ ### Usage
+
+* first copy the \*\_pool.\* file into the `src/operator/contrib/` folder, corresponding python test file can be found in the `unittests` folder
+* re-build and re-install the mxnet from source code
+* then normal model training & infering scheme
+
+* More details about the implementation of bottom-up pooling etc can be found in the `notes` folder
+
+The training code in under develop ...
 
 ## TODO
 

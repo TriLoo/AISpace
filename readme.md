@@ -49,7 +49,17 @@ gluoncv == 0.7.0
 
   trained using COCO 2017 train/val split.
 
- ### Usage
+### Prograss
+
+* corner pooling (done.)
+* Backbone: ghost (done.)
+* Head: Stair Upsampling from Poly-YOLO (done.)
+* Whole model (doing)
+* data loader (not done.)
+* training (not done.)
+* infernece (not done.)
+
+### Usage
 
 * first copy the \*\_pool.\* file into the `src/operator/contrib/` folder, corresponding python test file can be found in the `unittests` folder
 * re-build and re-install the mxnet from source code

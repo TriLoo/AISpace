@@ -52,7 +52,7 @@ gluoncv == 0.7.0
 ### Prograss
 
 * corner pooling (done.)
-* Backbone: ghost (done.)
+* Backbone: ghost (done.). Original hourglass backbone downscale the input by 4, here by 8 instead
 * Head: Stair Upsampling from Poly-YOLO (done.)
 * Whole model (doing)
 * data loader (not done.)

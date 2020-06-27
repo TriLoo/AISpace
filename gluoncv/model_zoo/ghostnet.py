@@ -89,11 +89,12 @@ class  GhostResBlock(gluon.HybridBlock):
 
 
 class GhostNet(gluon.HybridBlock):
-    def __init__(self, cls_nums=1000, **kwargs):
+    def __init__(self, cls_nums=1000, out_stages=1, **kwargs):
         super(GhostNet, self).__init__(**kwargs)
         in_channels  = [16, 16, 16, 24, 24, 40,  40, 80, 80, 80, 80, 112, 112, 160, 160, 160, 160, 960, 960, 1280]
         exp_channels = [16, 48, 72, 72, 120, 240, 200, 184, 184, 480, 672, 672, 960, 960, 960, 960]
         stage_n = [2, 2, 2, 6, 5]
+        self.out_stages = out_stages
 
         with self.name_scope():
             ## stem block
@@ -130,23 +131,27 @@ class GhostNet(gluon.HybridBlock):
     def hybrid_forward(self, F, x):
         feat = self.stem(x)
         # print('shape of feat (stem): ', feat.shape)
-        feat = self.stage1(feat)
-        # print('shape of feat (stage 1): ', feat.shape)
-        feat = self.stage2(feat)
-        # print('shape of feat (stage 2): ', feat.shape)
-        feat = self.stage3(feat)
-        # print('shape of feat (stage 3): ', feat.shape)
-        feat = self.stage4(feat)
-        # print('shape of feat (stage 4): ', feat.shape)
-        feat = self.stage5(feat)
-        # print('shape of feat (stage 5): ', feat.shape)
-        feat = self.avg(feat)
-        # print('shape of feat (global avg): ', feat.shape)
-        feat = self.fc0(feat)
-        # print('shape of feat (fc0): ', feat.shape)
-        out = self.out(feat)
+        feat1 = self.stage1(feat)
+        # print('shape of feat (stage 1): ', feat1.shape)
+        feat2 = self.stage2(feat1)
+        # print('shape of feat (stage 2): ', feat2.shape)
+        feat3 = self.stage3(feat2)
+        # print('shape of feat (stage 3): ', feat3.shape)
+        feat4 = self.stage4(feat3)
+        # print('shape of feat (stage 4): ', feat4.shape)
+        feat5 = self.stage5(feat4)
+        # print('shape of feat (stage 5): ', feat5.shape)        ## in_w // 32, in_h // 32
+        avg = self.avg(feat5)
+        # print('shape of feat (global avg): ', feat6.shape)
+        fc0 = self.fc0(avg)
+        # print('shape of feat (fc0): ', feat7.shape)
+        out = self.out(fc0)
 
-        return out
+        if self.out_stages == 1:
+            return out
+        else:
+            outs = [feat1, feat2, feat3, feat4, feat5]
+            return outs[int(-1 * self.out_stages):]
 
 
 def ghostnet512(cls_nums=1000, pretrained=False, **kwargs):
